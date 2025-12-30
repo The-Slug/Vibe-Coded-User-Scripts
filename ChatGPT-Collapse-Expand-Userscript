@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Message Collapser
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.7
 // @description  Add expand/collapse buttons to ChatGPT messages
 // @author       Claude Opus 4.5 (Vibecoded via Alexander Slugworth)
 // @match        https://chatgpt.com/*
@@ -13,8 +13,62 @@
 (function() {
     'use strict';
 
+    const STORAGE_KEY = 'cgpt-collapse-state';
+
+    // Get current conversation ID from URL (everything after /c/)
+    function getConversationId() {
+        const match = location.pathname.match(/\/c\/(.+)/);
+        return match ? match[1] : null;
+    }
+
+    // Load all saved state from localStorage
+    function loadAllState() {
+        try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            console.error('Failed to load collapse state:', e);
+            return {};
+        }
+    }
+
+    // Save all state to localStorage
+    function saveAllState(allState) {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(allState));
+        } catch (e) {
+            console.error('Failed to save collapse state:', e);
+        }
+    }
+
+    // Load collapsed turns for current conversation
+    function loadCollapsedTurns() {
+        const convId = getConversationId();
+        if (!convId) return new Set();
+        
+        const allState = loadAllState();
+        const turns = allState[convId] || [];
+        return new Set(turns);
+    }
+
+    // Save collapsed turns for current conversation
+    function saveCollapsedTurns() {
+        const convId = getConversationId();
+        if (!convId) return;
+        
+        const allState = loadAllState();
+        allState[convId] = Array.from(collapsedTurns);
+        
+        // Clean up empty entries
+        if (allState[convId].length === 0) {
+            delete allState[convId];
+        }
+        
+        saveAllState(allState);
+    }
+
     // Track collapsed state by conversation turn number (persists across retries)
-    const collapsedTurns = new Set();
+    let collapsedTurns = loadCollapsedTurns();
 
     // Inject styles manually since GM_addStyle isn't available
     function injectStyles() {
@@ -227,8 +281,7 @@
                 white-space: nowrap;
             }
 
-            /* Collapsed outline - use border which won't get clipped */
-            /* Target the first flex child which contains the message content */
+            /* Collapsed outline - all cases use the same element */
             article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > .flex.max-w-full {
                 position: relative;
                 margin-left: -5px;
@@ -240,6 +293,12 @@
                 background: var(--main-surface-primary, #ffffff);
             }
 
+            /* When nav buttons present, extend padding to include them */
+            article[data-turn="user"].cgpt-collapsed:has([aria-label="Previous response"]) [class*="thread-content-max-width"] > .flex.max-w-full {
+                padding-bottom: 40px;
+                margin-bottom: -36px;
+            }
+
             article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > .flex.max-w-full {
                 position: relative;
                 margin-left: -5px;
@@ -249,6 +308,20 @@
                 border: 2px solid rgba(107, 114, 128, 0.35) !important;
                 border-radius: 12px;
                 background: var(--main-surface-primary, #ffffff);
+            }
+
+            /* When nav buttons present, extend padding to include them */
+            article[data-turn="assistant"].cgpt-collapsed:has([aria-label="Previous response"]) [class*="thread-content-max-width"] > .flex.max-w-full {
+                padding-bottom: 40px;
+                margin-bottom: -36px;
+            }
+
+            /* Make sure z-0 appears above the extended border background */
+            article.cgpt-collapsed:has([aria-label="Previous response"]) .z-0 {
+                position: relative;
+                z-index: 1;
+                background: transparent !important;
+                border: none !important;
             }
 
             /* Add small spacing above collapsed assistant messages */
@@ -278,6 +351,8 @@
             /* Show only the retry navigation container (first child div containing nav buttons) */
             article.cgpt-collapsed .z-0:has([aria-label="Previous response"]) > div {
                 display: flex !important;
+                opacity: 1 !important;
+                pointer-events: auto !important;
             }
 
             /* Hide everything in that div except the nav control */
@@ -290,6 +365,24 @@
                 display: flex !important;
                 background: transparent !important;
                 border: none !important;
+            }
+
+            /* For expanded messages with retry nav, always show the nav buttons (not hidden on hover) */
+            article[data-turn]:not(.cgpt-collapsed) .z-0 > div:has([aria-label="Previous response"]) {
+                opacity: 1 !important;
+                pointer-events: auto !important;
+            }
+
+            /* For user messages, only show the nav control part, keep other buttons hover-dependent */
+            article[data-turn="user"]:not(.cgpt-collapsed) .z-0 > div > .text-token-text-secondary:has([aria-label="Previous response"]) {
+                opacity: 1 !important;
+                pointer-events: auto !important;
+            }
+
+            /* For assistant messages, also always show the nav control */
+            article[data-turn="assistant"]:not(.cgpt-collapsed) .z-0 > div > .text-token-text-secondary:has([aria-label="Previous response"]) {
+                opacity: 1 !important;
+                pointer-events: auto !important;
             }
 
             /* Dark mode adjustments */
@@ -433,6 +526,7 @@
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
                 if (toggle) toggle.textContent = allCollapsedNow ? '−' : '+';
             });
+            saveCollapsedTurns();
             updateGlobalButtonStates();
         });
 
@@ -458,6 +552,7 @@
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
                 if (toggle) toggle.textContent = aiCollapsedNow ? '−' : '+';
             });
+            saveCollapsedTurns();
             updateGlobalButtonStates();
         });
 
@@ -483,6 +578,7 @@
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
                 if (toggle) toggle.textContent = userCollapsedNow ? '−' : '+';
             });
+            saveCollapsedTurns();
             updateGlobalButtonStates();
         });
 
@@ -550,6 +646,7 @@
                     collapsedTurns.add(turnId);
                     toggle.textContent = '+';
                 }
+                saveCollapsedTurns();
                 updateGlobalButtonStates();
             });
             innerDiv.appendChild(toggle);
@@ -705,8 +802,8 @@
         const url = location.href;
         if (url !== lastUrl) {
             lastUrl = url;
-            // Clear collapsed state for new chat
-            collapsedTurns.clear();
+            // Load collapsed state for new conversation (or clear if no conversation)
+            collapsedTurns = loadCollapsedTurns();
             setTimeout(() => {
                 // Remove old global controls when navigating
                 const oldControls = document.querySelector('.cgpt-collapse-header-controls');
