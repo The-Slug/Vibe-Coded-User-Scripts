@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Message Collapser
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Add expand/collapse buttons to ChatGPT messages
 // @author       Claude Opus 4.5 (Vibecoded via Alexander Slugworth)
 // @match        https://chatgpt.com/*
@@ -13,10 +13,8 @@
 (function() {
     'use strict';
 
-    // Track state for toggle buttons
-    let allCollapsed = false;
-    let aiCollapsed = false;
-    let userCollapsed = false;
+    // Track collapsed state by turn ID (persists across React re-renders)
+    const collapsedTurns = new Set();
 
     // Inject styles manually since GM_addStyle isn't available
     function injectStyles() {
@@ -123,6 +121,18 @@
                 border-color: #4b5563;
             }
 
+            /* Horizontal connector bar for expanded user messages - full width behind bubble */
+            article[data-turn="user"]:not(.cgpt-collapsed) [class*="thread-content-max-width"]::before {
+                content: '';
+                position: absolute;
+                left: -36px;
+                right: 0;
+                top: 18px;
+                height: 2px;
+                background: #f9f9f9;
+                z-index: 0;
+            }
+
             /* Ensure relative positioning for toggle placement */
             article[data-turn] [class*="thread-content-max-width"] {
                 position: relative;
@@ -137,28 +147,65 @@
                 display: none;
             }
 
+            /* Collapsed preview - use flexbox to keep ellipsis visible */
             article[data-turn].cgpt-collapsed .cgpt-collapsed-preview {
-                display: block !important;
+                display: flex !important;
+                flex-direction: row;
+                align-items: baseline;
+                max-width: 100%;
+                overflow: hidden;
+            }
+
+            /* Text part truncates with ellipsis */
+            .cgpt-collapsed-preview .cgpt-preview-text {
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
-                max-width: 100%;
+                flex: 1;
+                min-width: 0;
             }
 
+            /* Ellipsis marker stays visible and doesn't shrink */
             .cgpt-collapsed-preview .cgpt-ellipsis {
-                font-weight: 700;
-                color: var(--text-secondary, #6b7280);
+                font-weight: 700 !important;
+                color: var(--text-secondary, #6b7280) !important;
+                flex-shrink: 0;
+                white-space: nowrap;
             }
 
-            /* Collapsed outline using box-shadow on the flex container inside */
+            /* Collapsed outline - use ::before pseudo-element for proper extended background */
             article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
-                box-shadow: 0 0 0 2px rgba(55, 65, 81, 0.5);
+                position: relative;
+            }
+
+            article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"]::before {
+                content: '';
+                position: absolute;
+                top: -4px;
+                bottom: -4px;
+                left: -9px;
+                right: -4px;
+                border: 2px solid rgba(55, 65, 81, 0.5);
                 border-radius: 12px;
+                background: var(--main-surface-primary, #ffffff);
+                z-index: -1;
             }
 
             article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
-                box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.35);
+                position: relative;
+            }
+
+            article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"]::before {
+                content: '';
+                position: absolute;
+                top: -4px;
+                bottom: -4px;
+                left: -9px;
+                right: -4px;
+                border: 2px solid rgba(107, 114, 128, 0.35);
                 border-radius: 12px;
+                background: var(--main-surface-primary, #ffffff);
+                z-index: -1;
             }
 
             /* Hide action buttons when collapsed */
@@ -211,16 +258,23 @@
                 border-color: #f3f4f6;
             }
 
-            .dark article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
-                box-shadow: 0 0 0 2px rgba(200, 200, 200, 0.45);
+            /* Dark mode connector bar */
+            .dark article[data-turn="user"]:not(.cgpt-collapsed) [class*="thread-content-max-width"]::before {
+                background: #3a3a3a;
             }
 
-            .dark article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
-                box-shadow: 0 0 0 2px rgba(160, 160, 160, 0.3);
+            .dark article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"]::before {
+                border-color: rgba(200, 200, 200, 0.45);
+                background: var(--main-surface-primary, #212121);
+            }
+
+            .dark article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"]::before {
+                border-color: rgba(160, 160, 160, 0.3);
+                background: var(--main-surface-primary, #212121);
             }
 
             .dark .cgpt-collapsed-preview .cgpt-ellipsis {
-                color: var(--text-secondary, #b4b4b4);
+                color: var(--text-secondary, #b4b4b4) !important;
             }
         `;
         document.head.appendChild(style);
@@ -237,9 +291,8 @@
             const allCollapsedNow = allArticles.length > 0 && 
                 Array.from(allArticles).every(a => a.classList.contains('cgpt-collapsed'));
             
-            allCollapsed = allCollapsedNow;
-            allBtn.textContent = allCollapsed ? '+ Expand All' : '− Collapse All';
-            allBtn.classList.toggle('cgpt-btn-dark', allCollapsed);
+            allBtn.textContent = allCollapsedNow ? '+ Expand All' : '− Collapse All';
+            allBtn.classList.toggle('cgpt-btn-dark', allCollapsedNow);
         }
         
         if (aiBtn) {
@@ -247,9 +300,8 @@
             const aiCollapsedNow = aiArticles.length > 0 && 
                 Array.from(aiArticles).every(a => a.classList.contains('cgpt-collapsed'));
             
-            aiCollapsed = aiCollapsedNow;
-            aiBtn.textContent = aiCollapsed ? '+ Expand 🤖' : '− Collapse 🤖';
-            aiBtn.classList.toggle('cgpt-btn-dark', aiCollapsed);
+            aiBtn.textContent = aiCollapsedNow ? '+ Expand 🤖' : '− Collapse 🤖';
+            aiBtn.classList.toggle('cgpt-btn-dark', aiCollapsedNow);
         }
 
         if (userBtn) {
@@ -257,9 +309,8 @@
             const userCollapsedNow = userArticles.length > 0 && 
                 Array.from(userArticles).every(a => a.classList.contains('cgpt-collapsed'));
             
-            userCollapsed = userCollapsedNow;
-            userBtn.textContent = userCollapsed ? '+ Expand 🧑' : '− Collapse 🧑';
-            userBtn.classList.toggle('cgpt-btn-dark', userCollapsed);
+            userBtn.textContent = userCollapsedNow ? '+ Expand 🧑' : '− Collapse 🧑';
+            userBtn.classList.toggle('cgpt-btn-dark', userCollapsedNow);
         }
     }
 
@@ -282,15 +333,21 @@
         allBtn.className = 'cgpt-collapse-global-btn cgpt-all-btn';
         allBtn.textContent = '− Collapse All';
         allBtn.addEventListener('click', () => {
-            allCollapsed = !allCollapsed;
-            document.querySelectorAll('article[data-turn]').forEach(article => {
-                if (allCollapsed) {
-                    article.classList.add('cgpt-collapsed');
-                } else {
+            const allArticles = document.querySelectorAll('article[data-turn]');
+            const allCollapsedNow = allArticles.length > 0 && 
+                Array.from(allArticles).every(a => a.classList.contains('cgpt-collapsed'));
+            
+            allArticles.forEach(article => {
+                const turnId = article.getAttribute('data-turn-id');
+                if (allCollapsedNow) {
                     article.classList.remove('cgpt-collapsed');
+                    collapsedTurns.delete(turnId);
+                } else {
+                    article.classList.add('cgpt-collapsed');
+                    collapsedTurns.add(turnId);
                 }
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
-                if (toggle) toggle.textContent = allCollapsed ? '+' : '−';
+                if (toggle) toggle.textContent = allCollapsedNow ? '−' : '+';
             });
             updateGlobalButtonStates();
         });
@@ -300,15 +357,21 @@
         aiBtn.className = 'cgpt-collapse-global-btn cgpt-ai-btn';
         aiBtn.textContent = '− Collapse 🤖';
         aiBtn.addEventListener('click', () => {
-            aiCollapsed = !aiCollapsed;
-            document.querySelectorAll('article[data-turn="assistant"]').forEach(article => {
-                if (aiCollapsed) {
-                    article.classList.add('cgpt-collapsed');
-                } else {
+            const aiArticles = document.querySelectorAll('article[data-turn="assistant"]');
+            const aiCollapsedNow = aiArticles.length > 0 && 
+                Array.from(aiArticles).every(a => a.classList.contains('cgpt-collapsed'));
+            
+            aiArticles.forEach(article => {
+                const turnId = article.getAttribute('data-turn-id');
+                if (aiCollapsedNow) {
                     article.classList.remove('cgpt-collapsed');
+                    collapsedTurns.delete(turnId);
+                } else {
+                    article.classList.add('cgpt-collapsed');
+                    collapsedTurns.add(turnId);
                 }
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
-                if (toggle) toggle.textContent = aiCollapsed ? '+' : '−';
+                if (toggle) toggle.textContent = aiCollapsedNow ? '−' : '+';
             });
             updateGlobalButtonStates();
         });
@@ -318,15 +381,21 @@
         userBtn.className = 'cgpt-collapse-global-btn cgpt-user-btn';
         userBtn.textContent = '− Collapse 🧑';
         userBtn.addEventListener('click', () => {
-            userCollapsed = !userCollapsed;
-            document.querySelectorAll('article[data-turn="user"]').forEach(article => {
-                if (userCollapsed) {
-                    article.classList.add('cgpt-collapsed');
-                } else {
+            const userArticles = document.querySelectorAll('article[data-turn="user"]');
+            const userCollapsedNow = userArticles.length > 0 && 
+                Array.from(userArticles).every(a => a.classList.contains('cgpt-collapsed'));
+            
+            userArticles.forEach(article => {
+                const turnId = article.getAttribute('data-turn-id');
+                if (userCollapsedNow) {
                     article.classList.remove('cgpt-collapsed');
+                    collapsedTurns.delete(turnId);
+                } else {
+                    article.classList.add('cgpt-collapsed');
+                    collapsedTurns.add(turnId);
                 }
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
-                if (toggle) toggle.textContent = userCollapsed ? '+' : '−';
+                if (toggle) toggle.textContent = userCollapsedNow ? '−' : '+';
             });
             updateGlobalButtonStates();
         });
@@ -349,77 +418,120 @@
         return element.textContent || element.innerText || '';
     }
 
-    // Add toggle button and collapsed preview to an article
-    function addToggleButton(article) {
-        // Skip if already processed
-        if (article.querySelector('.cgpt-collapse-toggle')) {
-            return;
+    // Create the preview element properly using DOM methods (not innerHTML)
+    function createPreviewElement(text) {
+        const preview = document.createElement('div');
+        preview.className = 'cgpt-collapsed-preview';
+        
+        const textSpan = document.createElement('span');
+        textSpan.className = 'cgpt-preview-text';
+        textSpan.textContent = text;
+        
+        const ellipsisSpan = document.createElement('span');
+        ellipsisSpan.className = 'cgpt-ellipsis';
+        ellipsisSpan.textContent = ' [...]';
+        
+        preview.appendChild(textSpan);
+        preview.appendChild(ellipsisSpan);
+        
+        return preview;
+    }
+
+    // Setup or restore an article's collapse functionality
+    function setupArticle(article) {
+        const turnId = article.getAttribute('data-turn-id');
+        const turnType = article.getAttribute('data-turn');
+        const isCollapsed = collapsedTurns.has(turnId);
+        
+        // Find the content container
+        const innerDiv = article.querySelector('[class*="thread-content-max-width"]');
+        if (!innerDiv) return;
+
+        // Add or update toggle button
+        let toggle = article.querySelector('.cgpt-collapse-toggle');
+        if (!toggle) {
+            toggle = document.createElement('button');
+            toggle.className = 'cgpt-collapse-toggle';
+            toggle.title = 'Toggle collapse';
+            toggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const currentlyCollapsed = article.classList.contains('cgpt-collapsed');
+                if (currentlyCollapsed) {
+                    article.classList.remove('cgpt-collapsed');
+                    collapsedTurns.delete(turnId);
+                    toggle.textContent = '−';
+                } else {
+                    article.classList.add('cgpt-collapsed');
+                    collapsedTurns.add(turnId);
+                    toggle.textContent = '+';
+                }
+                updateGlobalButtonStates();
+            });
+            innerDiv.appendChild(toggle);
+        }
+        
+        // Set toggle text based on state
+        toggle.textContent = isCollapsed ? '+' : '−';
+        
+        // Apply collapsed class if needed
+        if (isCollapsed) {
+            article.classList.add('cgpt-collapsed');
+        } else {
+            article.classList.remove('cgpt-collapsed');
         }
 
-        const toggle = document.createElement('button');
-        toggle.className = 'cgpt-collapse-toggle';
-        toggle.textContent = '−';
-        toggle.title = 'Toggle collapse';
-
         // Find the content element based on message type
-        const turnType = article.getAttribute('data-turn');
         let contentElement = null;
         let contentContainer = null;
 
         if (turnType === 'user') {
-            // User messages: look for .whitespace-pre-wrap inside user bubble
-            contentElement = article.querySelector('.whitespace-pre-wrap');
+            // For user messages, find the whitespace-pre-wrap that's NOT our preview
+            const allWhitespace = article.querySelectorAll('.whitespace-pre-wrap');
+            for (const el of allWhitespace) {
+                if (!el.classList.contains('cgpt-collapsed-preview') && 
+                    !el.closest('.cgpt-collapsed-preview')) {
+                    contentElement = el;
+                    break;
+                }
+            }
             contentContainer = contentElement?.closest('.user-message-bubble-color') || 
                               contentElement?.closest('[class*="user-message"]') ||
                               contentElement?.parentElement;
         } else if (turnType === 'assistant') {
-            // Assistant messages: look for .markdown
             contentElement = article.querySelector('.markdown');
             contentContainer = contentElement?.parentElement;
         }
 
         if (contentElement && contentContainer) {
-            // Mark the original content
-            contentElement.classList.add('cgpt-original-content');
+            // Mark the original content (may need to re-add after React re-render)
+            if (!contentElement.classList.contains('cgpt-original-content')) {
+                contentElement.classList.add('cgpt-original-content');
+            }
 
-            // Create collapsed preview
-            const preview = document.createElement('div');
-            preview.className = 'cgpt-collapsed-preview';
+            // Remove any existing preview and recreate it cleanly
+            const existingPreviews = contentContainer.querySelectorAll('.cgpt-collapsed-preview');
+            existingPreviews.forEach(p => p.remove());
             
-            // Get first line of text
+            // Get the preview text
             const fullText = getTextContent(contentElement);
             const firstLine = fullText.split('\n')[0].trim();
             const truncatedText = firstLine.length > 100 ? firstLine.substring(0, 100) : firstLine;
             
-            preview.innerHTML = `<span>${truncatedText}</span><span class="cgpt-ellipsis"> [...]</span>`;
-            
-            // Insert preview after content element
+            // Create preview using DOM methods (not innerHTML)
+            const preview = createPreviewElement(truncatedText);
             contentContainer.appendChild(preview);
-        }
-
-        toggle.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const isCollapsed = article.classList.toggle('cgpt-collapsed');
-            toggle.textContent = isCollapsed ? '+' : '−';
-            // Update global button states when individual toggles change
-            updateGlobalButtonStates();
-        });
-
-        // Find the inner content div to position the button relative to
-        const innerDiv = article.querySelector('[class*="thread-content-max-width"]');
-        if (innerDiv) {
-            innerDiv.appendChild(toggle);
         }
     }
 
     // Process all articles in the conversation
     function processArticles() {
         const articles = document.querySelectorAll('article[data-turn]');
-        articles.forEach(addToggleButton);
+        articles.forEach(setupArticle);
 
         // Also ensure global controls exist
         if (articles.length > 0) {
             createGlobalControls();
+            updateGlobalButtonStates();
         }
     }
 
@@ -428,25 +540,37 @@
         injectStyles();
         processArticles();
 
-        // Watch for new messages being added
+        // Watch for DOM changes (new messages, React re-renders)
         const observer = new MutationObserver((mutations) => {
             let shouldProcess = false;
+            
             for (const mutation of mutations) {
+                // Check for added nodes
                 if (mutation.addedNodes.length > 0) {
                     for (const node of mutation.addedNodes) {
                         if (node.nodeType === Node.ELEMENT_NODE) {
                             if (node.matches?.('article[data-turn]') ||
-                                node.querySelector?.('article[data-turn]')) {
+                                node.querySelector?.('article[data-turn]') ||
+                                node.matches?.('.markdown') ||
+                                node.closest?.('article[data-turn]')) {
                                 shouldProcess = true;
                                 break;
                             }
                         }
                     }
                 }
+                
+                // Check for modifications to existing articles (React re-renders)
+                if (mutation.type === 'childList' && mutation.target.closest?.('article[data-turn]')) {
+                    shouldProcess = true;
+                }
+                
                 if (shouldProcess) break;
             }
+            
             if (shouldProcess) {
-                processArticles();
+                // Small delay to let React finish rendering
+                setTimeout(processArticles, 50);
             }
         });
 
@@ -470,10 +594,8 @@
         const url = location.href;
         if (url !== lastUrl) {
             lastUrl = url;
-            // Reset state for new chat
-            allCollapsed = false;
-            aiCollapsed = false;
-            userCollapsed = false;
+            // Clear collapsed state for new chat
+            collapsedTurns.clear();
             setTimeout(() => {
                 // Remove old global controls when navigating
                 const oldControls = document.querySelector('.cgpt-collapse-global-wrapper');
