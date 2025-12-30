@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Message Collapser
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  Add expand/collapse buttons to ChatGPT messages
 // @author       Claude Opus 4.5 (Vibecoded via Alexander Slugworth)
 // @match        https://chatgpt.com/*
@@ -12,6 +12,11 @@
 
 (function() {
     'use strict';
+
+    // Track state for toggle buttons
+    let allCollapsed = false;
+    let aiCollapsed = false;
+    let userCollapsed = false;
 
     // Inject styles manually since GM_addStyle isn't available
     function injectStyles() {
@@ -31,16 +36,11 @@
 
             .cgpt-collapse-global-controls {
                 display: flex;
-                flex-direction: column;
-                gap: 6px;
+                gap: 8px;
                 margin-left: -36px;
             }
 
-            .cgpt-collapse-global-row {
-                display: flex;
-                gap: 8px;
-            }
-
+            /* Base button style (light - for collapse state) */
             .cgpt-collapse-global-btn {
                 padding: 6px 14px;
                 border: 1px solid var(--border-medium, #d1d5db);
@@ -51,6 +51,7 @@
                 font-weight: 500;
                 cursor: pointer;
                 transition: all 0.15s ease;
+                text-align: center;
             }
 
             .cgpt-collapse-global-btn:hover {
@@ -58,13 +59,29 @@
                 border-color: var(--border-heavy, #9ca3af);
             }
 
-            /* AI-only buttons - slightly darker outline */
-            .cgpt-collapse-global-btn.cgpt-ai-btn {
-                border-color: var(--border-heavy, #9ca3af);
+            /* Fixed widths for buttons to prevent size changes */
+            .cgpt-collapse-global-btn.cgpt-all-btn {
+                min-width: 115px;
             }
 
-            .cgpt-collapse-global-btn.cgpt-ai-btn:hover {
-                border-color: #6b7280;
+            .cgpt-collapse-global-btn.cgpt-ai-btn {
+                min-width: 115px;
+            }
+
+            .cgpt-collapse-global-btn.cgpt-user-btn {
+                min-width: 110px;
+            }
+
+            /* Dark button style (for expand state) */
+            .cgpt-collapse-global-btn.cgpt-btn-dark {
+                background: #374151;
+                border-color: #374151;
+                color: #ffffff;
+            }
+
+            .cgpt-collapse-global-btn.cgpt-btn-dark:hover {
+                background: #4b5563;
+                border-color: #4b5563;
             }
 
             /* Toggle button styles - default (expanded) state */
@@ -160,12 +177,16 @@
                 background: var(--main-surface-tertiary, #3a3a3a);
             }
 
-            .dark .cgpt-collapse-global-btn.cgpt-ai-btn {
-                border-color: #6b7280;
+            /* Dark mode - dark button style (inverted for contrast) */
+            .dark .cgpt-collapse-global-btn.cgpt-btn-dark {
+                background: #e5e7eb;
+                border-color: #e5e7eb;
+                color: #1f2937;
             }
 
-            .dark .cgpt-collapse-global-btn.cgpt-ai-btn:hover {
-                border-color: #9ca3af;
+            .dark .cgpt-collapse-global-btn.cgpt-btn-dark:hover {
+                background: #f3f4f6;
+                border-color: #f3f4f6;
             }
 
             .dark .cgpt-collapse-toggle {
@@ -205,6 +226,43 @@
         document.head.appendChild(style);
     }
 
+    // Update button states based on current collapsed state
+    function updateGlobalButtonStates() {
+        const allBtn = document.querySelector('.cgpt-all-btn');
+        const aiBtn = document.querySelector('.cgpt-ai-btn');
+        const userBtn = document.querySelector('.cgpt-user-btn');
+        
+        if (allBtn) {
+            const allArticles = document.querySelectorAll('article[data-turn]');
+            const allCollapsedNow = allArticles.length > 0 && 
+                Array.from(allArticles).every(a => a.classList.contains('cgpt-collapsed'));
+            
+            allCollapsed = allCollapsedNow;
+            allBtn.textContent = allCollapsed ? '+ Expand All' : '− Collapse All';
+            allBtn.classList.toggle('cgpt-btn-dark', allCollapsed);
+        }
+        
+        if (aiBtn) {
+            const aiArticles = document.querySelectorAll('article[data-turn="assistant"]');
+            const aiCollapsedNow = aiArticles.length > 0 && 
+                Array.from(aiArticles).every(a => a.classList.contains('cgpt-collapsed'));
+            
+            aiCollapsed = aiCollapsedNow;
+            aiBtn.textContent = aiCollapsed ? '+ Expand 🤖' : '− Collapse 🤖';
+            aiBtn.classList.toggle('cgpt-btn-dark', aiCollapsed);
+        }
+
+        if (userBtn) {
+            const userArticles = document.querySelectorAll('article[data-turn="user"]');
+            const userCollapsedNow = userArticles.length > 0 && 
+                Array.from(userArticles).every(a => a.classList.contains('cgpt-collapsed'));
+            
+            userCollapsed = userCollapsedNow;
+            userBtn.textContent = userCollapsed ? '+ Expand 🧑' : '− Collapse 🧑';
+            userBtn.classList.toggle('cgpt-btn-dark', userCollapsed);
+        }
+    }
+
     // Create the global collapse/expand controls
     function createGlobalControls() {
         // Check if controls already exist
@@ -219,66 +277,63 @@
         const controlsContainer = document.createElement('div');
         controlsContainer.className = 'cgpt-collapse-global-controls';
 
-        // Row 1: All messages
-        const row1 = document.createElement('div');
-        row1.className = 'cgpt-collapse-global-row';
-
-        const collapseAllBtn = document.createElement('button');
-        collapseAllBtn.className = 'cgpt-collapse-global-btn';
-        collapseAllBtn.textContent = '− Collapse All';
-        collapseAllBtn.addEventListener('click', () => {
+        // All messages toggle button
+        const allBtn = document.createElement('button');
+        allBtn.className = 'cgpt-collapse-global-btn cgpt-all-btn';
+        allBtn.textContent = '− Collapse All';
+        allBtn.addEventListener('click', () => {
+            allCollapsed = !allCollapsed;
             document.querySelectorAll('article[data-turn]').forEach(article => {
-                article.classList.add('cgpt-collapsed');
+                if (allCollapsed) {
+                    article.classList.add('cgpt-collapsed');
+                } else {
+                    article.classList.remove('cgpt-collapsed');
+                }
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
-                if (toggle) toggle.textContent = '+';
+                if (toggle) toggle.textContent = allCollapsed ? '+' : '−';
             });
+            updateGlobalButtonStates();
         });
 
-        const expandAllBtn = document.createElement('button');
-        expandAllBtn.className = 'cgpt-collapse-global-btn';
-        expandAllBtn.textContent = '+ Expand All';
-        expandAllBtn.addEventListener('click', () => {
-            document.querySelectorAll('article[data-turn]').forEach(article => {
-                article.classList.remove('cgpt-collapsed');
-                const toggle = article.querySelector('.cgpt-collapse-toggle');
-                if (toggle) toggle.textContent = '−';
-            });
-        });
-
-        row1.appendChild(collapseAllBtn);
-        row1.appendChild(expandAllBtn);
-
-        // Row 2: AI responses only
-        const row2 = document.createElement('div');
-        row2.className = 'cgpt-collapse-global-row';
-
-        const collapseAIBtn = document.createElement('button');
-        collapseAIBtn.className = 'cgpt-collapse-global-btn cgpt-ai-btn';
-        collapseAIBtn.textContent = '− Collapse AI';
-        collapseAIBtn.addEventListener('click', () => {
+        // AI messages only toggle button
+        const aiBtn = document.createElement('button');
+        aiBtn.className = 'cgpt-collapse-global-btn cgpt-ai-btn';
+        aiBtn.textContent = '− Collapse 🤖';
+        aiBtn.addEventListener('click', () => {
+            aiCollapsed = !aiCollapsed;
             document.querySelectorAll('article[data-turn="assistant"]').forEach(article => {
-                article.classList.add('cgpt-collapsed');
+                if (aiCollapsed) {
+                    article.classList.add('cgpt-collapsed');
+                } else {
+                    article.classList.remove('cgpt-collapsed');
+                }
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
-                if (toggle) toggle.textContent = '+';
+                if (toggle) toggle.textContent = aiCollapsed ? '+' : '−';
             });
+            updateGlobalButtonStates();
         });
 
-        const expandAIBtn = document.createElement('button');
-        expandAIBtn.className = 'cgpt-collapse-global-btn cgpt-ai-btn';
-        expandAIBtn.textContent = '+ Expand AI';
-        expandAIBtn.addEventListener('click', () => {
-            document.querySelectorAll('article[data-turn="assistant"]').forEach(article => {
-                article.classList.remove('cgpt-collapsed');
+        // User messages only toggle button
+        const userBtn = document.createElement('button');
+        userBtn.className = 'cgpt-collapse-global-btn cgpt-user-btn';
+        userBtn.textContent = '− Collapse 🧑';
+        userBtn.addEventListener('click', () => {
+            userCollapsed = !userCollapsed;
+            document.querySelectorAll('article[data-turn="user"]').forEach(article => {
+                if (userCollapsed) {
+                    article.classList.add('cgpt-collapsed');
+                } else {
+                    article.classList.remove('cgpt-collapsed');
+                }
                 const toggle = article.querySelector('.cgpt-collapse-toggle');
-                if (toggle) toggle.textContent = '−';
+                if (toggle) toggle.textContent = userCollapsed ? '+' : '−';
             });
+            updateGlobalButtonStates();
         });
 
-        row2.appendChild(collapseAIBtn);
-        row2.appendChild(expandAIBtn);
-
-        controlsContainer.appendChild(row1);
-        controlsContainer.appendChild(row2);
+        controlsContainer.appendChild(allBtn);
+        controlsContainer.appendChild(aiBtn);
+        controlsContainer.appendChild(userBtn);
         wrapper.appendChild(controlsContainer);
 
         // Insert before the first article
@@ -346,6 +401,8 @@
             e.stopPropagation();
             const isCollapsed = article.classList.toggle('cgpt-collapsed');
             toggle.textContent = isCollapsed ? '+' : '−';
+            // Update global button states when individual toggles change
+            updateGlobalButtonStates();
         });
 
         // Find the inner content div to position the button relative to
@@ -413,6 +470,10 @@
         const url = location.href;
         if (url !== lastUrl) {
             lastUrl = url;
+            // Reset state for new chat
+            allCollapsed = false;
+            aiCollapsed = false;
+            userCollapsed = false;
             setTimeout(() => {
                 // Remove old global controls when navigating
                 const oldControls = document.querySelector('.cgpt-collapse-global-wrapper');
