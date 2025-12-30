@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Message Collapser
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Add expand/collapse buttons to ChatGPT messages
 // @author       Claude Opus 4.5 (Vibecoded via Alexander Slugworth)
 // @match        https://chatgpt.com/*
@@ -23,19 +23,73 @@
         const style = document.createElement('style');
         style.id = 'cgpt-collapse-styles';
         style.textContent = `
-            /* Global controls wrapper - separate element before articles */
-            .cgpt-collapse-global-wrapper {
-                width: 100%;
-                max-width: 48rem;
-                margin: 0 auto;
-                padding: 10px 0 10px 0;
-                position: relative;
+            /* Force header to have white background */
+            #page-header {
+                background: #ffffff !important;
             }
 
-            .cgpt-collapse-global-controls {
+            .dark #page-header {
+                background: #212121 !important;
+            }
+
+            /* Global controls in header - positioned to align with message column */
+            .cgpt-collapse-header-controls {
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: 50%;
+                transform: translateY(-50%);
+                display: flex;
+                justify-content: center;
+                pointer-events: none;
+                padding-left: 200px; /* Leave room for model selector on the left */
+                padding-right: 150px; /* Leave room for header buttons on the right */
+                box-sizing: border-box;
+            }
+
+            .cgpt-collapse-header-inner {
+                width: 100%;
+                max-width: 48rem;
                 display: flex;
                 gap: 8px;
-                margin-left: -36px;
+                padding-left: calc(64px - 36px);
+                padding-right: 64px;
+                box-sizing: border-box;
+                pointer-events: auto;
+                flex-shrink: 0;
+            }
+
+            /* On smaller screens, hide buttons if they would overlap */
+            @media (max-width: 900px) {
+                .cgpt-collapse-header-controls {
+                    padding-left: 180px;
+                    padding-right: 100px;
+                }
+                
+                .cgpt-collapse-global-btn {
+                    padding: 4px 8px;
+                    font-size: 12px;
+                }
+                
+                .cgpt-collapse-global-btn.cgpt-all-btn,
+                .cgpt-collapse-global-btn.cgpt-ai-btn,
+                .cgpt-collapse-global-btn.cgpt-user-btn {
+                    min-width: auto;
+                }
+            }
+
+            @media (max-width: 700px) {
+                .cgpt-collapse-header-inner {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                }
+            }
+
+            @media (min-width: 1024px) {
+                .cgpt-collapse-header-inner {
+                    padding-left: calc(64px - 36px);
+                    padding-right: 64px;
+                }
             }
 
             /* Base button style (light - for collapse state) */
@@ -173,39 +227,32 @@
                 white-space: nowrap;
             }
 
-            /* Collapsed outline - use ::before pseudo-element for proper extended background */
+            /* Collapsed outline - use box-shadow which won't get clipped */
             article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
                 position: relative;
-            }
-
-            article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"]::before {
-                content: '';
-                position: absolute;
-                top: -4px;
-                bottom: -4px;
-                left: -9px;
-                right: -4px;
-                border: 2px solid rgba(55, 65, 81, 0.5);
+                margin-left: -5px;
+                padding-left: 5px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                border: 2px solid rgba(55, 65, 81, 0.5) !important;
                 border-radius: 12px;
                 background: var(--main-surface-primary, #ffffff);
-                z-index: -1;
             }
 
             article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
                 position: relative;
-            }
-
-            article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"]::before {
-                content: '';
-                position: absolute;
-                top: -4px;
-                bottom: -4px;
-                left: -9px;
-                right: -4px;
-                border: 2px solid rgba(107, 114, 128, 0.35);
+                margin-left: -5px;
+                padding-left: 5px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                border: 2px solid rgba(107, 114, 128, 0.35) !important;
                 border-radius: 12px;
                 background: var(--main-surface-primary, #ffffff);
-                z-index: -1;
+            }
+
+            /* Add small spacing above collapsed assistant messages */
+            article[data-turn="assistant"].cgpt-collapsed {
+                margin-top: 1px;
             }
 
             /* Hide action buttons when collapsed */
@@ -263,13 +310,13 @@
                 background: #3a3a3a;
             }
 
-            .dark article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"]::before {
-                border-color: rgba(200, 200, 200, 0.45);
+            .dark article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+                border-color: rgba(200, 200, 200, 0.45) !important;
                 background: var(--main-surface-primary, #212121);
             }
 
-            .dark article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"]::before {
-                border-color: rgba(160, 160, 160, 0.3);
+            .dark article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+                border-color: rgba(160, 160, 160, 0.3) !important;
                 background: var(--main-surface-primary, #212121);
             }
 
@@ -314,19 +361,23 @@
         }
     }
 
-    // Create the global collapse/expand controls
+    // Create the global collapse/expand controls in the header
     function createGlobalControls() {
         // Check if controls already exist
-        if (document.querySelector('.cgpt-collapse-global-wrapper')) {
+        if (document.querySelector('.cgpt-collapse-header-controls')) {
             return;
         }
 
-        // Create wrapper structure
-        const wrapper = document.createElement('div');
-        wrapper.className = 'cgpt-collapse-global-wrapper';
+        // Find the header
+        const header = document.querySelector('#page-header');
+        if (!header) return;
 
-        const controlsContainer = document.createElement('div');
-        controlsContainer.className = 'cgpt-collapse-global-controls';
+        // Create wrapper that centers and aligns with message column
+        const wrapper = document.createElement('div');
+        wrapper.className = 'cgpt-collapse-header-controls';
+
+        const innerWrapper = document.createElement('div');
+        innerWrapper.className = 'cgpt-collapse-header-inner';
 
         // All messages toggle button
         const allBtn = document.createElement('button');
@@ -400,16 +451,13 @@
             updateGlobalButtonStates();
         });
 
-        controlsContainer.appendChild(allBtn);
-        controlsContainer.appendChild(aiBtn);
-        controlsContainer.appendChild(userBtn);
-        wrapper.appendChild(controlsContainer);
+        innerWrapper.appendChild(allBtn);
+        innerWrapper.appendChild(aiBtn);
+        innerWrapper.appendChild(userBtn);
+        wrapper.appendChild(innerWrapper);
 
-        // Insert before the first article
-        const firstArticle = document.querySelector('article[data-turn]');
-        if (firstArticle && firstArticle.parentNode) {
-            firstArticle.parentNode.insertBefore(wrapper, firstArticle);
-        }
+        // Add to header
+        header.appendChild(wrapper);
     }
 
     // Extract text content from an element
@@ -598,7 +646,7 @@
             collapsedTurns.clear();
             setTimeout(() => {
                 // Remove old global controls when navigating
-                const oldControls = document.querySelector('.cgpt-collapse-global-wrapper');
+                const oldControls = document.querySelector('.cgpt-collapse-header-controls');
                 if (oldControls) oldControls.remove();
                 processArticles();
             }, 500);
