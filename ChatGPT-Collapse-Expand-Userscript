@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Message Collapser
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  Add expand/collapse buttons to ChatGPT messages
 // @author       Claude Opus 4.5 (Vibecoded via Alexander Slugworth)
 // @match        https://chatgpt.com/*
@@ -13,7 +13,7 @@
 (function() {
     'use strict';
 
-    // Track collapsed state by turn ID (persists across React re-renders)
+    // Track collapsed state by conversation turn number (persists across retries)
     const collapsedTurns = new Set();
 
     // Inject styles manually since GM_addStyle isn't available
@@ -227,8 +227,9 @@
                 white-space: nowrap;
             }
 
-            /* Collapsed outline - use box-shadow which won't get clipped */
-            article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+            /* Collapsed outline - use border which won't get clipped */
+            /* Target the first flex child which contains the message content */
+            article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > .flex.max-w-full {
                 position: relative;
                 margin-left: -5px;
                 padding-left: 5px;
@@ -239,7 +240,7 @@
                 background: var(--main-surface-primary, #ffffff);
             }
 
-            article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+            article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > .flex.max-w-full {
                 position: relative;
                 margin-left: -5px;
                 padding-left: 5px;
@@ -258,6 +259,37 @@
             /* Hide action buttons when collapsed */
             article.cgpt-collapsed .z-0 {
                 display: none !important;
+            }
+
+            /* Show z-0 only if it has retry navigation */
+            article.cgpt-collapsed .z-0:has([aria-label="Previous response"]) {
+                display: flex !important;
+                min-height: auto !important;
+                background: transparent !important;
+                border: none !important;
+                outline: none !important;
+            }
+
+            /* Hide the inner div that contains all buttons */
+            article.cgpt-collapsed .z-0 > div {
+                display: none !important;
+            }
+
+            /* Show only the retry navigation container (first child div containing nav buttons) */
+            article.cgpt-collapsed .z-0:has([aria-label="Previous response"]) > div {
+                display: flex !important;
+            }
+
+            /* Hide everything in that div except the nav control */
+            article.cgpt-collapsed .z-0 > div > *:not(.text-token-text-secondary:has([aria-label="Previous response"])) {
+                display: none !important;
+            }
+
+            /* Make sure the nav control itself is visible */
+            article.cgpt-collapsed .z-0 > div > .text-token-text-secondary:has([aria-label="Previous response"]) {
+                display: flex !important;
+                background: transparent !important;
+                border: none !important;
             }
 
             /* Dark mode adjustments */
@@ -310,12 +342,12 @@
                 background: #3a3a3a;
             }
 
-            .dark article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+            .dark article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > .flex.max-w-full {
                 border-color: rgba(200, 200, 200, 0.45) !important;
                 background: var(--main-surface-primary, #212121);
             }
 
-            .dark article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+            .dark article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > .flex.max-w-full {
                 border-color: rgba(160, 160, 160, 0.3) !important;
                 background: var(--main-surface-primary, #212121);
             }
@@ -389,7 +421,8 @@
                 Array.from(allArticles).every(a => a.classList.contains('cgpt-collapsed'));
             
             allArticles.forEach(article => {
-                const turnId = article.getAttribute('data-turn-id');
+                const testId = article.getAttribute('data-testid');
+                const turnId = testId || article.getAttribute('data-turn-id');
                 if (allCollapsedNow) {
                     article.classList.remove('cgpt-collapsed');
                     collapsedTurns.delete(turnId);
@@ -413,7 +446,8 @@
                 Array.from(aiArticles).every(a => a.classList.contains('cgpt-collapsed'));
             
             aiArticles.forEach(article => {
-                const turnId = article.getAttribute('data-turn-id');
+                const testId = article.getAttribute('data-testid');
+                const turnId = testId || article.getAttribute('data-turn-id');
                 if (aiCollapsedNow) {
                     article.classList.remove('cgpt-collapsed');
                     collapsedTurns.delete(turnId);
@@ -437,7 +471,8 @@
                 Array.from(userArticles).every(a => a.classList.contains('cgpt-collapsed'));
             
             userArticles.forEach(article => {
-                const turnId = article.getAttribute('data-turn-id');
+                const testId = article.getAttribute('data-testid');
+                const turnId = testId || article.getAttribute('data-turn-id');
                 if (userCollapsedNow) {
                     article.classList.remove('cgpt-collapsed');
                     collapsedTurns.delete(turnId);
@@ -487,7 +522,9 @@
 
     // Setup or restore an article's collapse functionality
     function setupArticle(article) {
-        const turnId = article.getAttribute('data-turn-id');
+        // Use data-testid (conversation-turn-N) for tracking, as it persists across retries
+        const testId = article.getAttribute('data-testid');
+        const turnId = testId || article.getAttribute('data-turn-id');
         const turnType = article.getAttribute('data-turn');
         const isCollapsed = collapsedTurns.has(turnId);
         
@@ -527,6 +564,23 @@
         } else {
             article.classList.remove('cgpt-collapsed');
         }
+
+        // Add click handlers to retry navigation buttons to reprocess after navigation
+        const retryNavButtons = article.querySelectorAll('[aria-label="Previous response"], [aria-label="Next response"]');
+        retryNavButtons.forEach(btn => {
+            if (!btn.hasAttribute('data-cgpt-retry-handler')) {
+                btn.setAttribute('data-cgpt-retry-handler', 'true');
+                btn.addEventListener('click', () => {
+                    // After clicking, wait for React to update and reprocess
+                    setTimeout(() => {
+                        setupArticle(article);
+                    }, 100);
+                    setTimeout(() => {
+                        setupArticle(article);
+                    }, 300);
+                });
+            }
+        });
 
         // Find the content element based on message type
         let contentElement = null;
@@ -588,7 +642,7 @@
         injectStyles();
         processArticles();
 
-        // Watch for DOM changes (new messages, React re-renders)
+        // Watch for DOM changes (new messages, React re-renders, retry navigation)
         const observer = new MutationObserver((mutations) => {
             let shouldProcess = false;
             
@@ -612,6 +666,13 @@
                 if (mutation.type === 'childList' && mutation.target.closest?.('article[data-turn]')) {
                     shouldProcess = true;
                 }
+
+                // Check for attribute changes (like data-message-id changing during retry nav)
+                if (mutation.type === 'attributes' && 
+                    (mutation.attributeName === 'data-message-id' || mutation.attributeName === 'data-turn-id') &&
+                    mutation.target.closest?.('article[data-turn]')) {
+                    shouldProcess = true;
+                }
                 
                 if (shouldProcess) break;
             }
@@ -624,7 +685,9 @@
 
         observer.observe(document.body, {
             childList: true,
-            subtree: true
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['data-message-id', 'data-turn-id']
         });
     }
 
