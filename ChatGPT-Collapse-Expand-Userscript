@@ -1,0 +1,425 @@
+// ==UserScript==
+// @name         ChatGPT Message Collapser
+// @namespace    http://tampermonkey.net/
+// @version      1.1
+// @description  Add expand/collapse buttons to ChatGPT messages
+// @author       Claude Opus 4.5 (Vibecoded via Alexander Slugworth)
+// @match        https://chatgpt.com/*
+// @match        https://chat.openai.com/*
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Inject styles manually since GM_addStyle isn't available
+    function injectStyles() {
+        if (document.getElementById('cgpt-collapse-styles')) return;
+        
+        const style = document.createElement('style');
+        style.id = 'cgpt-collapse-styles';
+        style.textContent = `
+            /* Global controls wrapper - separate element before articles */
+            .cgpt-collapse-global-wrapper {
+                width: 100%;
+                max-width: 48rem;
+                margin: 0 auto;
+                padding: 10px 0 10px 0;
+                position: relative;
+            }
+
+            .cgpt-collapse-global-controls {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                margin-left: -36px;
+            }
+
+            .cgpt-collapse-global-row {
+                display: flex;
+                gap: 8px;
+            }
+
+            .cgpt-collapse-global-btn {
+                padding: 6px 14px;
+                border: 1px solid var(--border-medium, #d1d5db);
+                border-radius: 6px;
+                background: var(--main-surface-secondary, #f9fafb);
+                color: var(--text-primary, #374151);
+                font-size: 13px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.15s ease;
+            }
+
+            .cgpt-collapse-global-btn:hover {
+                background: var(--main-surface-tertiary, #f3f4f6);
+                border-color: var(--border-heavy, #9ca3af);
+            }
+
+            /* AI-only buttons - slightly darker outline */
+            .cgpt-collapse-global-btn.cgpt-ai-btn {
+                border-color: var(--border-heavy, #9ca3af);
+            }
+
+            .cgpt-collapse-global-btn.cgpt-ai-btn:hover {
+                border-color: #6b7280;
+            }
+
+            /* Toggle button styles - default (expanded) state */
+            .cgpt-collapse-toggle {
+                position: absolute;
+                left: -36px;
+                top: 8px;
+                width: 22px;
+                height: 22px;
+                border: 1px solid var(--border-medium, #d1d5db);
+                border-radius: 4px;
+                background: var(--main-surface-secondary, #f9fafb);
+                color: var(--text-secondary, #6b7280);
+                font-size: 14px;
+                font-weight: 600;
+                line-height: 1;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.15s ease;
+                z-index: 10;
+            }
+
+            .cgpt-collapse-toggle:hover {
+                background: var(--main-surface-tertiary, #e5e7eb);
+                border-color: var(--border-heavy, #9ca3af);
+            }
+
+            /* Toggle button - collapsed state (dark with white text) */
+            article[data-turn].cgpt-collapsed .cgpt-collapse-toggle {
+                background: #374151;
+                border-color: #374151;
+                color: #ffffff;
+            }
+
+            article[data-turn].cgpt-collapsed .cgpt-collapse-toggle:hover {
+                background: #4b5563;
+                border-color: #4b5563;
+            }
+
+            /* Ensure relative positioning for toggle placement */
+            article[data-turn] [class*="thread-content-max-width"] {
+                position: relative;
+            }
+
+            /* Hide original text when collapsed, show our cloned preview */
+            article[data-turn].cgpt-collapsed .cgpt-original-content {
+                display: none !important;
+            }
+
+            article[data-turn] .cgpt-collapsed-preview {
+                display: none;
+            }
+
+            article[data-turn].cgpt-collapsed .cgpt-collapsed-preview {
+                display: block !important;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: 100%;
+            }
+
+            .cgpt-collapsed-preview .cgpt-ellipsis {
+                font-weight: 700;
+                color: var(--text-secondary, #6b7280);
+            }
+
+            /* Collapsed outline using box-shadow on the flex container inside */
+            article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+                box-shadow: 0 0 0 2px rgba(55, 65, 81, 0.5);
+                border-radius: 12px;
+            }
+
+            article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+                box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.35);
+                border-radius: 12px;
+            }
+
+            /* Hide action buttons when collapsed */
+            article.cgpt-collapsed .z-0 {
+                display: none !important;
+            }
+
+            /* Dark mode adjustments */
+            .dark .cgpt-collapse-global-btn {
+                background: var(--main-surface-secondary, #2f2f2f);
+                border-color: var(--border-medium, #4a4a4a);
+                color: var(--text-primary, #ececec);
+            }
+
+            .dark .cgpt-collapse-global-btn:hover {
+                background: var(--main-surface-tertiary, #3a3a3a);
+            }
+
+            .dark .cgpt-collapse-global-btn.cgpt-ai-btn {
+                border-color: #6b7280;
+            }
+
+            .dark .cgpt-collapse-global-btn.cgpt-ai-btn:hover {
+                border-color: #9ca3af;
+            }
+
+            .dark .cgpt-collapse-toggle {
+                background: var(--main-surface-secondary, #2f2f2f);
+                border-color: var(--border-medium, #4a4a4a);
+                color: var(--text-secondary, #b4b4b4);
+            }
+
+            .dark .cgpt-collapse-toggle:hover {
+                background: var(--main-surface-tertiary, #3a3a3a);
+            }
+
+            /* Dark mode - collapsed toggle button (light with dark text for contrast) */
+            .dark article[data-turn].cgpt-collapsed .cgpt-collapse-toggle {
+                background: #e5e7eb;
+                border-color: #e5e7eb;
+                color: #1f2937;
+            }
+
+            .dark article[data-turn].cgpt-collapsed .cgpt-collapse-toggle:hover {
+                background: #f3f4f6;
+                border-color: #f3f4f6;
+            }
+
+            .dark article[data-turn="user"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+                box-shadow: 0 0 0 2px rgba(200, 200, 200, 0.45);
+            }
+
+            .dark article[data-turn="assistant"].cgpt-collapsed [class*="thread-content-max-width"] > [class*="flex"] {
+                box-shadow: 0 0 0 2px rgba(160, 160, 160, 0.3);
+            }
+
+            .dark .cgpt-collapsed-preview .cgpt-ellipsis {
+                color: var(--text-secondary, #b4b4b4);
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // Create the global collapse/expand controls
+    function createGlobalControls() {
+        // Check if controls already exist
+        if (document.querySelector('.cgpt-collapse-global-wrapper')) {
+            return;
+        }
+
+        // Create wrapper structure
+        const wrapper = document.createElement('div');
+        wrapper.className = 'cgpt-collapse-global-wrapper';
+
+        const controlsContainer = document.createElement('div');
+        controlsContainer.className = 'cgpt-collapse-global-controls';
+
+        // Row 1: All messages
+        const row1 = document.createElement('div');
+        row1.className = 'cgpt-collapse-global-row';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.className = 'cgpt-collapse-global-btn';
+        collapseAllBtn.textContent = '− Collapse All';
+        collapseAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('article[data-turn]').forEach(article => {
+                article.classList.add('cgpt-collapsed');
+                const toggle = article.querySelector('.cgpt-collapse-toggle');
+                if (toggle) toggle.textContent = '+';
+            });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.className = 'cgpt-collapse-global-btn';
+        expandAllBtn.textContent = '+ Expand All';
+        expandAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('article[data-turn]').forEach(article => {
+                article.classList.remove('cgpt-collapsed');
+                const toggle = article.querySelector('.cgpt-collapse-toggle');
+                if (toggle) toggle.textContent = '−';
+            });
+        });
+
+        row1.appendChild(collapseAllBtn);
+        row1.appendChild(expandAllBtn);
+
+        // Row 2: AI responses only
+        const row2 = document.createElement('div');
+        row2.className = 'cgpt-collapse-global-row';
+
+        const collapseAIBtn = document.createElement('button');
+        collapseAIBtn.className = 'cgpt-collapse-global-btn cgpt-ai-btn';
+        collapseAIBtn.textContent = '− Collapse AI';
+        collapseAIBtn.addEventListener('click', () => {
+            document.querySelectorAll('article[data-turn="assistant"]').forEach(article => {
+                article.classList.add('cgpt-collapsed');
+                const toggle = article.querySelector('.cgpt-collapse-toggle');
+                if (toggle) toggle.textContent = '+';
+            });
+        });
+
+        const expandAIBtn = document.createElement('button');
+        expandAIBtn.className = 'cgpt-collapse-global-btn cgpt-ai-btn';
+        expandAIBtn.textContent = '+ Expand AI';
+        expandAIBtn.addEventListener('click', () => {
+            document.querySelectorAll('article[data-turn="assistant"]').forEach(article => {
+                article.classList.remove('cgpt-collapsed');
+                const toggle = article.querySelector('.cgpt-collapse-toggle');
+                if (toggle) toggle.textContent = '−';
+            });
+        });
+
+        row2.appendChild(collapseAIBtn);
+        row2.appendChild(expandAIBtn);
+
+        controlsContainer.appendChild(row1);
+        controlsContainer.appendChild(row2);
+        wrapper.appendChild(controlsContainer);
+
+        // Insert before the first article
+        const firstArticle = document.querySelector('article[data-turn]');
+        if (firstArticle && firstArticle.parentNode) {
+            firstArticle.parentNode.insertBefore(wrapper, firstArticle);
+        }
+    }
+
+    // Extract text content from an element
+    function getTextContent(element) {
+        if (!element) return '';
+        return element.textContent || element.innerText || '';
+    }
+
+    // Add toggle button and collapsed preview to an article
+    function addToggleButton(article) {
+        // Skip if already processed
+        if (article.querySelector('.cgpt-collapse-toggle')) {
+            return;
+        }
+
+        const toggle = document.createElement('button');
+        toggle.className = 'cgpt-collapse-toggle';
+        toggle.textContent = '−';
+        toggle.title = 'Toggle collapse';
+
+        // Find the content element based on message type
+        const turnType = article.getAttribute('data-turn');
+        let contentElement = null;
+        let contentContainer = null;
+
+        if (turnType === 'user') {
+            // User messages: look for .whitespace-pre-wrap inside user bubble
+            contentElement = article.querySelector('.whitespace-pre-wrap');
+            contentContainer = contentElement?.closest('.user-message-bubble-color') || 
+                              contentElement?.closest('[class*="user-message"]') ||
+                              contentElement?.parentElement;
+        } else if (turnType === 'assistant') {
+            // Assistant messages: look for .markdown
+            contentElement = article.querySelector('.markdown');
+            contentContainer = contentElement?.parentElement;
+        }
+
+        if (contentElement && contentContainer) {
+            // Mark the original content
+            contentElement.classList.add('cgpt-original-content');
+
+            // Create collapsed preview
+            const preview = document.createElement('div');
+            preview.className = 'cgpt-collapsed-preview';
+            
+            // Get first line of text
+            const fullText = getTextContent(contentElement);
+            const firstLine = fullText.split('\n')[0].trim();
+            const truncatedText = firstLine.length > 100 ? firstLine.substring(0, 100) : firstLine;
+            
+            preview.innerHTML = `<span>${truncatedText}</span><span class="cgpt-ellipsis"> [...]</span>`;
+            
+            // Insert preview after content element
+            contentContainer.appendChild(preview);
+        }
+
+        toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isCollapsed = article.classList.toggle('cgpt-collapsed');
+            toggle.textContent = isCollapsed ? '+' : '−';
+        });
+
+        // Find the inner content div to position the button relative to
+        const innerDiv = article.querySelector('[class*="thread-content-max-width"]');
+        if (innerDiv) {
+            innerDiv.appendChild(toggle);
+        }
+    }
+
+    // Process all articles in the conversation
+    function processArticles() {
+        const articles = document.querySelectorAll('article[data-turn]');
+        articles.forEach(addToggleButton);
+
+        // Also ensure global controls exist
+        if (articles.length > 0) {
+            createGlobalControls();
+        }
+    }
+
+    // Initialize
+    function init() {
+        injectStyles();
+        processArticles();
+
+        // Watch for new messages being added
+        const observer = new MutationObserver((mutations) => {
+            let shouldProcess = false;
+            for (const mutation of mutations) {
+                if (mutation.addedNodes.length > 0) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.nodeType === Node.ELEMENT_NODE) {
+                            if (node.matches?.('article[data-turn]') ||
+                                node.querySelector?.('article[data-turn]')) {
+                                shouldProcess = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (shouldProcess) break;
+            }
+            if (shouldProcess) {
+                processArticles();
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    // Wait for page to be ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        // Small delay to ensure ChatGPT's React has rendered
+        setTimeout(init, 500);
+    }
+
+    // Also re-run when navigating between chats (SPA navigation)
+    let lastUrl = location.href;
+    new MutationObserver(() => {
+        const url = location.href;
+        if (url !== lastUrl) {
+            lastUrl = url;
+            setTimeout(() => {
+                // Remove old global controls when navigating
+                const oldControls = document.querySelector('.cgpt-collapse-global-wrapper');
+                if (oldControls) oldControls.remove();
+                processArticles();
+            }, 500);
+        }
+    }).observe(document, { subtree: true, childList: true });
+
+})();
